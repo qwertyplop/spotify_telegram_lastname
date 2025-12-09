@@ -376,7 +376,10 @@ def spotify_callback():
 
 @app.route('/api/sync')
 def sync():
-    """Cron-triggered sync function."""
+    """
+    Cron-triggered sync function.
+    Optimized to minimize blob operations (max 1 write per sync).
+    """
     result = {
         'success': False,
         'action': 'none',
@@ -384,9 +387,16 @@ def sync():
         'timestamp': time.time(),
     }
 
+    # Track what needs to be saved (batch at end)
+    updates = {}
+    needs_save = False
+
     try:
+        # Load all data once (1 list + 1 read = 1 advanced + 1 simple)
+        all_data = storage._load_all_data()
+
         # Check flood wait
-        flood_until = storage.get_flood_wait_until()
+        flood_until = all_data.get('flood_wait_until', 0)
         if flood_until and time.time() < flood_until:
             wait_remaining = int(flood_until - time.time())
             result['action'] = 'rate_limited'
@@ -394,55 +404,64 @@ def sync():
             return jsonify(result)
 
         # Get Telegram session
-        session = storage.get_session()
+        session = all_data.get('telegram_session') or os.environ.get('TELEGRAM_STRING_SESSION')
         if not session:
             result['message'] = 'No Telegram session configured'
-            storage.log_error('No Telegram session', 'sync')
             return jsonify(result)
 
         # Get/refresh Spotify tokens
-        tokens = storage.get_tokens()
-        if not tokens:
+        tokens = all_data.get('spotify_tokens')
+        if not tokens or not tokens.get('refresh_token'):
             refresh_token = os.environ.get('SPOTIFY_REFRESH_TOKEN')
             if not refresh_token:
                 result['message'] = 'No Spotify tokens configured'
-                storage.log_error('No Spotify tokens', 'sync')
                 return jsonify(result)
+            tokens = {'refresh_token': refresh_token}
 
-            token = spotify.refresh_access_token(refresh_token)
-            storage.save_tokens(token.access_token, token.refresh_token, token.expires_at)
+        # Check if token needs refresh
+        access_token = tokens.get('access_token')
+        if not access_token or time.time() >= (tokens.get('expires_at', 0) - 300):
+            token = spotify.refresh_access_token(tokens['refresh_token'])
+            updates['spotify_tokens'] = {
+                'access_token': token.access_token,
+                'refresh_token': token.refresh_token,
+                'expires_at': token.expires_at,
+            }
             access_token = token.access_token
-        else:
-            if time.time() >= (tokens.get('expires_at', 0) - 300):
-                token = spotify.refresh_access_token(tokens['refresh_token'])
-                storage.save_tokens(token.access_token, token.refresh_token, token.expires_at)
-                access_token = token.access_token
-            else:
-                access_token = tokens['access_token']
+            needs_save = True
 
-        # Get current track
+        # Get current track from Spotify
         try:
             track = spotify.get_current_track(access_token)
         except RuntimeError:
-            refresh_token = tokens.get('refresh_token') if tokens else os.environ.get('SPOTIFY_REFRESH_TOKEN')
-            token = spotify.refresh_access_token(refresh_token)
-            storage.save_tokens(token.access_token, token.refresh_token, token.expires_at)
+            # Token expired mid-request
+            token = spotify.refresh_access_token(tokens['refresh_token'])
+            updates['spotify_tokens'] = {
+                'access_token': token.access_token,
+                'refresh_token': token.refresh_token,
+                'expires_at': token.expires_at,
+            }
             track = spotify.get_current_track(token.access_token)
-
-        # Save track info
-        storage.save_current_track(track.to_dict() if track else None)
+            needs_save = True
 
         # Get current state
-        state = storage.get_state()
+        state = all_data.get('sync_state') or {
+            'original_last_name': '',
+            'current_last_name': '',
+            'last_track_key': None,
+            'last_update': 0,
+            'update_count': 0,
+            'status': 'initialized',
+        }
 
         # Get original last name if not set
         if not state.get('original_last_name'):
             try:
                 original = telegram.run_async(telegram.get_last_name(session))
                 state['original_last_name'] = original
+                needs_save = True
             except Exception as e:
                 result['message'] = f'Failed to get original name: {e}'
-                storage.log_error(str(e), 'get_original_name')
                 return jsonify(result)
 
         # Generate track key and formatted name
@@ -457,7 +476,12 @@ def sync():
             result['success'] = True
             result['action'] = 'skipped'
             result['message'] = 'No update needed'
-            storage.save_state(state)
+            # Only save if something else changed (tokens refreshed)
+            if needs_save:
+                state['last_sync'] = time.time()
+                updates['sync_state'] = state
+                updates['current_track'] = track.to_dict() if track else {'is_playing': False}
+                storage.batch_update(**updates)
             return jsonify(result)
 
         # Check if name actually changed
@@ -465,7 +489,11 @@ def sync():
             result['success'] = True
             result['action'] = 'skipped'
             result['message'] = 'Name unchanged'
-            storage.save_state(state)
+            if needs_save:
+                state['last_sync'] = time.time()
+                updates['sync_state'] = state
+                updates['current_track'] = track.to_dict() if track else {'is_playing': False}
+                storage.batch_update(**updates)
             return jsonify(result)
 
         # Perform Telegram update
@@ -477,29 +505,30 @@ def sync():
             state['current_last_name'] = desired_name
             state['last_track_key'] = track_key
             state['last_update'] = time.time()
+            state['last_sync'] = time.time()
             state['update_count'] = state.get('update_count', 0) + 1
             state['status'] = 'active'
-            storage.save_state(state)
+            updates['sync_state'] = state
+            updates['current_track'] = track.to_dict() if track else {'is_playing': False}
 
             result['success'] = True
             result['action'] = 'updated'
             result['message'] = f'Updated to: {desired_name}'
         elif flood_wait:
-            wait_until = time.time() + flood_wait + 10
-            storage.set_flood_wait_until(wait_until)
-            storage.log_error(f'FloodWaitError: {flood_wait}s', 'telegram_update')
-
+            updates['flood_wait_until'] = time.time() + flood_wait + 10
             result['action'] = 'rate_limited'
             result['message'] = f'Rate limited for {flood_wait}s'
         else:
-            storage.log_error('Unknown update error', 'telegram_update')
             result['message'] = 'Update failed'
+
+        # Single batch save at end (1 put = 1 advanced operation)
+        if updates:
+            storage.batch_update(**updates)
 
         return jsonify(result)
 
     except Exception as e:
         result['message'] = str(e)
-        storage.log_error(str(e), 'sync')
         return jsonify(result)
 
 
