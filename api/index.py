@@ -9,7 +9,7 @@ import time
 import secrets
 import urllib.parse
 
-from flask import Flask, jsonify, request, redirect, send_from_directory
+from flask import Flask, jsonify, request, redirect, send_from_directory, make_response
 
 # Add parent directory to path for lib imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -285,7 +285,6 @@ def spotify_auth():
 
     # Generate state for CSRF protection
     state = secrets.token_urlsafe(16)
-    storage.put_json('oauth_state.json', {'state': state, 'timestamp': time.time()})
 
     # Build redirect URI
     base_url = request.host_url.rstrip('/')
@@ -301,7 +300,11 @@ def spotify_auth():
     }
 
     auth_url = f"{SPOTIFY_AUTH_URL}?{urllib.parse.urlencode(params)}"
-    return redirect(auth_url)
+
+    # Store state in cookie
+    response = make_response(redirect(auth_url))
+    response.set_cookie('spotify_oauth_state', state, max_age=600, httponly=True, samesite='Lax')
+    return response
 
 
 @app.route('/api/spotify/callback')
@@ -319,10 +322,10 @@ def spotify_callback():
     if not code:
         return "<h1>Error</h1><p>No authorization code received</p><a href='/'>Back</a>"
 
-    # Verify state
-    stored = storage.get_json('oauth_state.json')
-    if not stored or stored.get('state') != state:
-        return "<h1>Error</h1><p>Invalid state parameter</p><a href='/'>Back</a>"
+    # Verify state from cookie
+    stored_state = request.cookies.get('spotify_oauth_state')
+    if not stored_state or stored_state != state:
+        return "<h1>Error</h1><p>Invalid state parameter. Please try again.</p><a href='/api/spotify/auth'>Retry</a>"
 
     # Exchange code for tokens
     client_id = os.environ.get('SPOTIFY_CLIENT_ID')
@@ -357,9 +360,6 @@ def spotify_callback():
         return "<h1>Error</h1><p>No refresh token received</p><a href='/'>Back</a>"
 
     storage.save_tokens(access_token, refresh_token, expires_at)
-
-    # Clean up state
-    storage.delete_blob('oauth_state.json')
 
     return """
     <html>
