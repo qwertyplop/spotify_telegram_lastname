@@ -6,20 +6,31 @@ Deployed as a Vercel serverless function.
 import os
 import sys
 import time
-import json
+import secrets
+import urllib.parse
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, redirect, send_from_directory
 
 # Add parent directory to path for lib imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib import storage, spotify, telegram, formatting
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='../static')
 
 # Constants
 MIN_UPDATE_INTERVAL = 180  # 3 minutes for same track
 TRACK_CHANGE_INTERVAL = 60  # 1 minute for different track
+
+# Spotify OAuth
+SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize"
+SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+SPOTIFY_SCOPES = "user-read-currently-playing user-read-playback-state"
+
+
+def get_base_url():
+    """Get base URL from request or environment."""
+    return os.environ.get('VERCEL_URL', request.host_url.rstrip('/'))
 
 
 def should_update(state: dict, new_track_key: str) -> bool:
@@ -35,14 +46,184 @@ def should_update(state: dict, new_track_key: str) -> bool:
     return elapsed >= MIN_UPDATE_INTERVAL
 
 
+# Dashboard HTML embedded
+DASHBOARD_HTML = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spotify-Telegram Sync</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e4e4e7;
+            padding: 2rem;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 2rem; font-size: 1.75rem; color: #fff; }
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .card-title { font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; color: #a1a1aa; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .status-dot.green { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+        .status-dot.red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .track-info { text-align: center; }
+        .track-title { font-size: 1.5rem; font-weight: 600; color: #fff; margin-bottom: 0.5rem; }
+        .track-artist { font-size: 1rem; color: #1db954; }
+        .track-album { font-size: 0.875rem; color: #a1a1aa; margin-top: 0.25rem; }
+        .not-playing { text-align: center; color: #71717a; font-style: italic; }
+        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .stat-item { text-align: center; }
+        .stat-value { font-size: 1.25rem; font-weight: 600; color: #fff; }
+        .stat-label { font-size: 0.75rem; color: #a1a1aa; margin-top: 0.25rem; }
+        .current-name {
+            background: rgba(29, 185, 84, 0.1);
+            border: 1px solid rgba(29, 185, 84, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            margin-top: 1rem;
+        }
+        .current-name-label { font-size: 0.75rem; color: #a1a1aa; margin-bottom: 0.5rem; }
+        .current-name-value { font-size: 1.125rem; color: #1db954; font-weight: 500; }
+        .connection-status { display: flex; gap: 1.5rem; justify-content: center; flex-wrap: wrap; }
+        .connection-item { display: flex; align-items: center; gap: 0.5rem; }
+        .error-card { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); }
+        .error-item { font-size: 0.875rem; padding: 0.5rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+        .error-item:last-child { border-bottom: none; }
+        .error-time { font-size: 0.75rem; color: #a1a1aa; }
+        .loading { text-align: center; padding: 3rem; color: #a1a1aa; }
+        .refresh-info { text-align: center; font-size: 0.75rem; color: #71717a; margin-top: 1rem; }
+        .rate-limit-banner {
+            background: rgba(234, 179, 8, 0.1);
+            border: 1px solid rgba(234, 179, 8, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            margin-bottom: 1rem;
+            color: #eab308;
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            font-size: 1rem;
+            transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn-spotify { background: #1db954; color: #fff; }
+        .btn-init { background: #3b82f6; color: #fff; margin-left: 0.5rem; }
+        .setup-card { text-align: center; }
+        .setup-card p { margin-bottom: 1rem; color: #a1a1aa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Spotify-Telegram Sync</h1>
+        <div id="content"><div class="loading">Loading...</div></div>
+        <div class="refresh-info">Auto-refreshes every 30 seconds</div>
+    </div>
+    <script>
+        function formatTimeAgo(seconds) {
+            if (!seconds) return 'Never';
+            if (seconds < 60) return seconds + 's ago';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            return Math.floor(seconds / 3600) + 'h ago';
+        }
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        function renderStatus(data) {
+            const content = document.getElementById('content');
+            const telegramOk = data.connected.telegram;
+            const spotifyOk = data.connected.spotify;
+
+            // Setup needed
+            if (!telegramOk || !spotifyOk) {
+                let setupHtml = '<div class="card setup-card"><div class="card-header"><span class="card-title">Setup Required</span></div>';
+                if (!spotifyOk) {
+                    setupHtml += '<p>Connect your Spotify account to get started.</p><a href="/api/spotify/auth" class="btn btn-spotify">Connect Spotify</a>';
+                }
+                if (!telegramOk) {
+                    setupHtml += '<p style="margin-top:1rem;">Telegram session not configured. Set TELEGRAM_STRING_SESSION env var.</p>';
+                }
+                if (spotifyOk || telegramOk) {
+                    setupHtml += '<a href="/api/init" class="btn btn-init">Initialize</a>';
+                }
+                setupHtml += '</div>';
+                content.innerHTML = setupHtml;
+                return;
+            }
+
+            let trackHtml = data.track && data.track.is_playing
+                ? '<div class="track-info"><div class="track-title">' + escapeHtml(data.track.title) + '</div><div class="track-artist">' + escapeHtml(data.track.artist) + '</div>' + (data.track.album ? '<div class="track-album">' + escapeHtml(data.track.album) + '</div>' : '') + '</div>'
+                : '<div class="not-playing">Nothing playing</div>';
+
+            let rateLimitHtml = data.rate_limit && data.rate_limit.active
+                ? '<div class="rate-limit-banner">Rate limited - ' + data.rate_limit.remaining_seconds + 's remaining</div>'
+                : '';
+
+            let errorsHtml = '';
+            if (data.errors && data.errors.length > 0) {
+                errorsHtml = '<div class="card error-card"><div class="card-header"><span class="card-title">Recent Errors</span></div>' +
+                    data.errors.slice(0, 3).map(function(err) {
+                        return '<div class="error-item"><div>' + escapeHtml(err.error) + '</div><div class="error-time">' + err.context + '</div></div>';
+                    }).join('') + '</div>';
+            }
+
+            content.innerHTML = rateLimitHtml +
+                '<div class="card"><div class="card-header"><span class="card-title">Connection Status</span></div>' +
+                '<div class="connection-status">' +
+                '<div class="connection-item"><span class="status-dot green"></span><span>Telegram</span></div>' +
+                '<div class="connection-item"><span class="status-dot green"></span><span>Spotify</span></div>' +
+                '</div></div>' +
+                '<div class="card"><div class="card-header"><span class="card-title">Now Playing</span></div>' + trackHtml + '</div>' +
+                '<div class="card"><div class="card-header"><span class="card-title">Sync Status</span></div>' +
+                '<div class="stat-grid">' +
+                '<div class="stat-item"><div class="stat-value">' + formatTimeAgo(data.sync.last_sync_ago) + '</div><div class="stat-label">Last Sync</div></div>' +
+                '<div class="stat-item"><div class="stat-value">' + formatTimeAgo(data.sync.last_update_ago) + '</div><div class="stat-label">Last Update</div></div>' +
+                '<div class="stat-item"><div class="stat-value">' + data.sync.update_count + '</div><div class="stat-label">Total Updates</div></div>' +
+                '<div class="stat-item"><div class="stat-value">' + (data.spotify_token.valid ? Math.floor(data.spotify_token.expires_in / 60) + 'm' : 'Expired') + '</div><div class="stat-label">Token Expires</div></div>' +
+                '</div>' +
+                (data.sync.current_name ? '<div class="current-name"><div class="current-name-label">Current Telegram Name</div><div class="current-name-value">' + escapeHtml(data.sync.current_name) + '</div></div>' : '') +
+                '</div>' + errorsHtml;
+        }
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                renderStatus(data);
+            } catch (error) {
+                document.getElementById('content').innerHTML = '<div class="card error-card"><div class="card-header"><span class="card-title">Error</span></div><div>Failed to fetch status</div></div>';
+            }
+        }
+        fetchStatus();
+        setInterval(fetchStatus, 30000);
+    </script>
+</body>
+</html>'''
+
+
 @app.route('/')
 def home():
-    """Health check."""
-    return jsonify({
-        'status': 'ok',
-        'service': 'spotify-telegram-sync',
-        'timestamp': time.time()
-    })
+    """Serve dashboard."""
+    return DASHBOARD_HTML
 
 
 @app.route('/api/status')
@@ -93,6 +274,104 @@ def status():
         'errors': errors[:5],
         'timestamp': now,
     })
+
+
+@app.route('/api/spotify/auth')
+def spotify_auth():
+    """Start Spotify OAuth flow."""
+    client_id = os.environ.get('SPOTIFY_CLIENT_ID')
+    if not client_id:
+        return jsonify({'error': 'SPOTIFY_CLIENT_ID not configured'}), 500
+
+    # Generate state for CSRF protection
+    state = secrets.token_urlsafe(16)
+    storage.put_json('oauth_state.json', {'state': state, 'timestamp': time.time()})
+
+    # Build redirect URI
+    base_url = request.host_url.rstrip('/')
+    redirect_uri = f"{base_url}/api/spotify/callback"
+
+    params = {
+        'client_id': client_id,
+        'response_type': 'code',
+        'redirect_uri': redirect_uri,
+        'scope': SPOTIFY_SCOPES,
+        'state': state,
+        'show_dialog': 'true',
+    }
+
+    auth_url = f"{SPOTIFY_AUTH_URL}?{urllib.parse.urlencode(params)}"
+    return redirect(auth_url)
+
+
+@app.route('/api/spotify/callback')
+def spotify_callback():
+    """Handle Spotify OAuth callback."""
+    import requests
+
+    error = request.args.get('error')
+    if error:
+        return f"<h1>Error</h1><p>{error}</p><a href='/'>Back to dashboard</a>"
+
+    code = request.args.get('code')
+    state = request.args.get('state')
+
+    if not code:
+        return "<h1>Error</h1><p>No authorization code received</p><a href='/'>Back</a>"
+
+    # Verify state
+    stored = storage.get_json('oauth_state.json')
+    if not stored or stored.get('state') != state:
+        return "<h1>Error</h1><p>Invalid state parameter</p><a href='/'>Back</a>"
+
+    # Exchange code for tokens
+    client_id = os.environ.get('SPOTIFY_CLIENT_ID')
+    client_secret = os.environ.get('SPOTIFY_CLIENT_SECRET')
+
+    base_url = request.host_url.rstrip('/')
+    redirect_uri = f"{base_url}/api/spotify/callback"
+
+    try:
+        resp = requests.post(
+            SPOTIFY_TOKEN_URL,
+            data={
+                'grant_type': 'authorization_code',
+                'code': code,
+                'redirect_uri': redirect_uri,
+            },
+            auth=(client_id, client_secret),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return f"<h1>Error</h1><p>Token exchange failed: {e}</p><a href='/'>Back</a>"
+
+    # Save tokens
+    access_token = data.get('access_token')
+    refresh_token = data.get('refresh_token')
+    expires_in = data.get('expires_in', 3600)
+    expires_at = time.time() + expires_in
+
+    if not refresh_token:
+        return "<h1>Error</h1><p>No refresh token received</p><a href='/'>Back</a>"
+
+    storage.save_tokens(access_token, refresh_token, expires_at)
+
+    # Clean up state
+    storage.delete_blob('oauth_state.json')
+
+    return """
+    <html>
+    <head><meta http-equiv="refresh" content="2;url=/"></head>
+    <body style="background:#1a1a2e;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+    <div style="text-align:center;">
+        <h1 style="color:#1db954;">Spotify Connected!</h1>
+        <p>Redirecting to dashboard...</p>
+    </div>
+    </body>
+    </html>
+    """
 
 
 @app.route('/api/sync')
@@ -243,21 +522,26 @@ def init():
     else:
         result['errors'].append('TELEGRAM_STRING_SESSION not set')
 
-    # Step 2: Initialize Spotify tokens
-    refresh_token = os.environ.get('SPOTIFY_REFRESH_TOKEN')
-    if refresh_token:
-        try:
-            token = spotify.refresh_access_token(refresh_token)
-            if storage.save_tokens(token.access_token, token.refresh_token, token.expires_at):
-                result['steps'].append('Spotify tokens stored')
-            else:
-                result['errors'].append('Failed to store Spotify tokens')
-        except Exception as e:
-            result['errors'].append(f'Spotify token error: {e}')
+    # Step 2: Initialize Spotify tokens (if not already from OAuth)
+    tokens = storage.get_tokens()
+    if not tokens:
+        refresh_token = os.environ.get('SPOTIFY_REFRESH_TOKEN')
+        if refresh_token:
+            try:
+                token = spotify.refresh_access_token(refresh_token)
+                if storage.save_tokens(token.access_token, token.refresh_token, token.expires_at):
+                    result['steps'].append('Spotify tokens stored')
+                else:
+                    result['errors'].append('Failed to store Spotify tokens')
+            except Exception as e:
+                result['errors'].append(f'Spotify token error: {e}')
+        else:
+            result['errors'].append('SPOTIFY_REFRESH_TOKEN not set (use Connect Spotify button)')
     else:
-        result['errors'].append('SPOTIFY_REFRESH_TOKEN not set')
+        result['steps'].append('Spotify tokens already configured')
 
     # Step 3: Get original Telegram last name
+    session = storage.get_session()
     if session:
         try:
             original_name = telegram.run_async(telegram.get_last_name(session))
@@ -273,6 +557,5 @@ def init():
     return jsonify(result)
 
 
-# Vercel requires this
 if __name__ == '__main__':
     app.run(debug=True)
