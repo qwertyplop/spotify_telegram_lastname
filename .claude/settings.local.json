@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: Spotify-Telegram sync for Vercel\n\n- Python serverless functions for Vercel deployment\n- Vercel Blob storage for session/state persistence\n- Cron-triggered sync every minute\n- Web dashboard for monitoring\n- Telegram StringSession support for serverless\nEOF\n)\")"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}
