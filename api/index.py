@@ -510,38 +510,39 @@ def init():
         'success': False,
         'steps': [],
         'errors': [],
+        'warnings': [],
     }
 
-    # Step 1: Store Telegram session
-    session = os.environ.get('TELEGRAM_STRING_SESSION')
+    # Step 1: Check Telegram session
+    session = storage.get_session()  # Checks blob first, then env var
     if session:
+        result['steps'].append('Telegram session available')
+        # Try to store in blob for persistence (optional)
         if storage.save_session(session):
-            result['steps'].append('Telegram session stored')
+            result['steps'].append('Telegram session stored in blob')
         else:
-            result['errors'].append('Failed to store Telegram session')
+            result['warnings'].append('Blob storage not available - using env var only')
     else:
-        result['errors'].append('TELEGRAM_STRING_SESSION not set')
+        result['errors'].append('TELEGRAM_STRING_SESSION not set in environment variables')
 
-    # Step 2: Initialize Spotify tokens (if not already from OAuth)
+    # Step 2: Check Spotify tokens
     tokens = storage.get_tokens()
-    if not tokens:
+    if tokens and tokens.get('refresh_token'):
+        result['steps'].append('Spotify tokens available')
+    else:
+        # Try to get from env var
         refresh_token = os.environ.get('SPOTIFY_REFRESH_TOKEN')
         if refresh_token:
             try:
                 token = spotify.refresh_access_token(refresh_token)
-                if storage.save_tokens(token.access_token, token.refresh_token, token.expires_at):
-                    result['steps'].append('Spotify tokens stored')
-                else:
-                    result['errors'].append('Failed to store Spotify tokens')
+                storage.save_tokens(token.access_token, token.refresh_token, token.expires_at)
+                result['steps'].append('Spotify tokens initialized from env var')
             except Exception as e:
                 result['errors'].append(f'Spotify token error: {e}')
         else:
-            result['errors'].append('SPOTIFY_REFRESH_TOKEN not set (use Connect Spotify button)')
-    else:
-        result['steps'].append('Spotify tokens already configured')
+            result['errors'].append('Spotify not connected. Click "Connect Spotify" button first.')
 
     # Step 3: Get original Telegram last name
-    session = storage.get_session()
     if session:
         try:
             original_name = telegram.run_async(telegram.get_last_name(session))
