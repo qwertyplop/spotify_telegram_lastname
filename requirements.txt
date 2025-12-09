@@ -1,3 +1,4 @@
 flask>=3.0.0
 telethon>=1.33.1
 requests>=2.31.0
+vercel-blob>=0.1.0

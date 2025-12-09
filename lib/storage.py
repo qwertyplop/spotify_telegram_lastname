@@ -1,63 +1,46 @@
 """
 Vercel Blob storage wrapper for persisting sync state.
+Uses the vercel_blob package.
 """
 
 import json
 import os
 import time
 from typing import Optional, Any
-from urllib.request import Request, urlopen
-from urllib.error import URLError
+
+try:
+    import vercel_blob
+    BLOB_AVAILABLE = True
+except ImportError:
+    BLOB_AVAILABLE = False
 
 
-BLOB_BASE_URL = "https://blob.vercel-storage.com"
-BLOB_PREFIX = "spotify-telegram"
-
-
-def _get_token() -> str:
+def _get_token() -> Optional[str]:
     """Get Blob read/write token from environment."""
-    token = os.environ.get("BLOB_READ_WRITE_TOKEN")
-    if not token:
-        raise RuntimeError("BLOB_READ_WRITE_TOKEN not set")
-    return token
-
-
-def _blob_url(key: str) -> str:
-    """Construct full blob URL for a key."""
-    return f"{BLOB_BASE_URL}/{BLOB_PREFIX}/{key}"
+    return os.environ.get("BLOB_READ_WRITE_TOKEN")
 
 
 def put_json(key: str, data: Any) -> bool:
     """
     Store JSON data in Vercel Blob.
-
-    Args:
-        key: Storage key (e.g., 'state.json')
-        data: Data to serialize and store
-
-    Returns:
-        True if successful, False otherwise
     """
+    if not BLOB_AVAILABLE:
+        print("vercel_blob not available")
+        return False
+
+    token = _get_token()
+    if not token:
+        print("BLOB_READ_WRITE_TOKEN not set")
+        return False
+
     try:
-        token = _get_token()
         payload = json.dumps(data).encode('utf-8')
-
-        req = Request(
-            f"{BLOB_BASE_URL}",
-            data=payload,
-            method='PUT',
-            headers={
-                'Authorization': f'Bearer {token}',
-                'Content-Type': 'application/json',
-                'x-api-version': '7',
-                'x-content-type': 'application/json',
-                'x-add-random-suffix': 'false',
-                'x-pathname': f'{BLOB_PREFIX}/{key}',
-            }
+        resp = vercel_blob.put(
+            key,
+            payload,
+            options={'token': token, 'addRandomSuffix': False}
         )
-
-        with urlopen(req, timeout=10) as resp:
-            return resp.status == 200
+        return resp is not None and 'url' in resp
     except Exception as e:
         print(f"Blob put error: {e}")
         return False
@@ -66,62 +49,63 @@ def put_json(key: str, data: Any) -> bool:
 def get_json(key: str) -> Optional[Any]:
     """
     Retrieve JSON data from Vercel Blob.
-
-    Args:
-        key: Storage key (e.g., 'state.json')
-
-    Returns:
-        Parsed JSON data or None if not found/error
     """
+    if not BLOB_AVAILABLE:
+        return None
+
+    token = _get_token()
+    if not token:
+        return None
+
     try:
-        token = _get_token()
-        url = _blob_url(key)
+        # List blobs to find the URL for our key
+        result = vercel_blob.list(options={'token': token, 'prefix': key})
+        blobs = result.get('blobs', [])
 
-        req = Request(
-            url,
-            method='GET',
-            headers={
-                'Authorization': f'Bearer {token}',
-            }
-        )
-
-        with urlopen(req, timeout=10) as resp:
-            if resp.status == 200:
-                return json.loads(resp.read().decode('utf-8'))
-    except URLError as e:
-        if hasattr(e, 'code') and e.code == 404:
+        if not blobs:
             return None
-        print(f"Blob get error: {e}")
+
+        # Find exact match
+        blob_url = None
+        for blob in blobs:
+            if blob.get('pathname') == key:
+                blob_url = blob.get('url')
+                break
+
+        if not blob_url:
+            return None
+
+        # Download the blob content
+        import urllib.request
+        with urllib.request.urlopen(blob_url, timeout=10) as resp:
+            content = resp.read().decode('utf-8')
+            return json.loads(content)
     except Exception as e:
         print(f"Blob get error: {e}")
-
-    return None
+        return None
 
 
 def delete_blob(key: str) -> bool:
     """
     Delete a blob from Vercel Blob storage.
-
-    Args:
-        key: Storage key to delete
-
-    Returns:
-        True if successful, False otherwise
     """
+    if not BLOB_AVAILABLE:
+        return False
+
+    token = _get_token()
+    if not token:
+        return False
+
     try:
-        token = _get_token()
-        url = _blob_url(key)
+        # First find the blob URL
+        result = vercel_blob.list(options={'token': token, 'prefix': key})
+        blobs = result.get('blobs', [])
 
-        req = Request(
-            url,
-            method='DELETE',
-            headers={
-                'Authorization': f'Bearer {token}',
-            }
-        )
-
-        with urlopen(req, timeout=10) as resp:
-            return resp.status in (200, 204)
+        for blob in blobs:
+            if blob.get('pathname') == key:
+                vercel_blob.delete(blob.get('url'), options={'token': token})
+                return True
+        return False
     except Exception as e:
         print(f"Blob delete error: {e}")
         return False
