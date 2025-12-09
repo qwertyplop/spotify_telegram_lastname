@@ -1,11 +1,6 @@
 """
-Vercel Blob storage wrapper for persisting sync state.
-Optimized to minimize API operations (2k advanced, 10k simple per month limit).
-
-Strategy:
-- Single blob file for all data to minimize operations
-- Cache blob URL to avoid repeated list() calls
-- Only write when data changes
+Upstash Redis storage wrapper for persisting sync state.
+Uses REST API - perfect for serverless with generous free tier (10k commands/day).
 """
 
 import json
@@ -14,126 +9,117 @@ import time
 from typing import Optional, Any
 
 try:
-    import vercel_blob
-    BLOB_AVAILABLE = True
+    from upstash_redis import Redis
+    REDIS_AVAILABLE = True
 except ImportError:
-    BLOB_AVAILABLE = False
+    REDIS_AVAILABLE = False
 
-# Single blob file for all data
-BLOB_FILENAME = "spotify-telegram-state.json"
+# Redis key prefix
+KEY_PREFIX = "spotify-telegram:"
 
-# Cache for blob URL (avoids repeated list() calls)
-_blob_url_cache: Optional[str] = None
-_cache_data: Optional[dict] = None
+# In-memory cache to reduce Redis calls within same request
+_cache: dict = {}
 _cache_time: float = 0
 CACHE_TTL = 30  # seconds
 
 
-def _get_token() -> Optional[str]:
-    """Get Blob read/write token from environment."""
-    return os.environ.get("BLOB_READ_WRITE_TOKEN")
+def _get_redis() -> Optional['Redis']:
+    """Get Redis client."""
+    if not REDIS_AVAILABLE:
+        return None
+
+    url = os.environ.get("UPSTASH_REDIS_REST_URL")
+    token = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+
+    if not url or not token:
+        return None
+
+    return Redis(url=url, token=token)
 
 
-def _get_blob_url(token: str) -> Optional[str]:
-    """Get blob URL, using cache if available."""
-    global _blob_url_cache
-
-    if _blob_url_cache:
-        return _blob_url_cache
-
-    try:
-        result = vercel_blob.list(options={'token': token, 'prefix': BLOB_FILENAME, 'limit': 1})
-        blobs = result.get('blobs', [])
-
-        for blob in blobs:
-            if blob.get('pathname') == BLOB_FILENAME:
-                _blob_url_cache = blob.get('url')
-                return _blob_url_cache
-    except Exception as e:
-        print(f"Blob list error: {e}")
-
-    return None
+def _key(name: str) -> str:
+    """Get prefixed key."""
+    return f"{KEY_PREFIX}{name}"
 
 
-def _load_all_data() -> dict:
-    """Load all data from blob (cached)."""
-    global _cache_data, _cache_time
+def get_value(key: str) -> Optional[Any]:
+    """Get a value from Redis."""
+    global _cache, _cache_time
 
-    # Return cached data if fresh
-    if _cache_data and (time.time() - _cache_time) < CACHE_TTL:
-        return _cache_data
+    full_key = _key(key)
 
-    if not BLOB_AVAILABLE:
-        return {}
+    # Check cache first
+    if full_key in _cache and (time.time() - _cache_time) < CACHE_TTL:
+        return _cache[full_key]
 
-    token = _get_token()
-    if not token:
-        return {}
+    redis = _get_redis()
+    if not redis:
+        return None
 
     try:
-        blob_url = _get_blob_url(token)
-        if not blob_url:
-            return {}
-
-        # Download blob content (simple operation if cache hit)
-        import urllib.request
-        with urllib.request.urlopen(blob_url, timeout=10) as resp:
-            content = resp.read().decode('utf-8')
-            _cache_data = json.loads(content)
+        value = redis.get(full_key)
+        if value:
+            # Redis returns string, parse JSON if needed
+            if isinstance(value, str) and value.startswith('{'):
+                value = json.loads(value)
+            _cache[full_key] = value
             _cache_time = time.time()
-            return _cache_data
+        return value
     except Exception as e:
-        print(f"Blob load error: {e}")
-        return {}
+        print(f"Redis get error: {e}")
+        return None
 
 
-def _save_all_data(data: dict) -> bool:
-    """Save all data to blob."""
-    global _blob_url_cache, _cache_data, _cache_time
+def set_value(key: str, value: Any, ex: int = None) -> bool:
+    """Set a value in Redis."""
+    global _cache, _cache_time
 
-    if not BLOB_AVAILABLE:
-        return False
+    full_key = _key(key)
 
-    token = _get_token()
-    if not token:
+    redis = _get_redis()
+    if not redis:
         return False
 
     try:
-        payload = json.dumps(data).encode('utf-8')
-        resp = vercel_blob.put(
-            BLOB_FILENAME,
-            payload,
-            options={'token': token, 'addRandomSuffix': False}
-        )
-        if resp and 'url' in resp:
-            _blob_url_cache = resp['url']
-            _cache_data = data
-            _cache_time = time.time()
-            return True
-        return False
+        # Serialize dicts/lists to JSON
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value)
+
+        if ex:
+            redis.set(full_key, value, ex=ex)
+        else:
+            redis.set(full_key, value)
+
+        # Update cache
+        _cache[full_key] = value if not isinstance(value, str) else json.loads(value) if value.startswith('{') else value
+        _cache_time = time.time()
+        return True
     except Exception as e:
-        print(f"Blob save error: {e}")
+        print(f"Redis set error: {e}")
         return False
 
 
-def _get_data_section(section: str, default: Any = None) -> Any:
-    """Get a section of data."""
-    data = _load_all_data()
-    return data.get(section, default)
+def delete_key(key: str) -> bool:
+    """Delete a key from Redis."""
+    redis = _get_redis()
+    if not redis:
+        return False
+
+    try:
+        redis.delete(_key(key))
+        if _key(key) in _cache:
+            del _cache[_key(key)]
+        return True
+    except Exception as e:
+        print(f"Redis delete error: {e}")
+        return False
 
 
-def _set_data_section(section: str, value: Any) -> bool:
-    """Set a section of data."""
-    data = _load_all_data()
-    data[section] = value
-    return _save_all_data(data)
-
-
-# Public API - same interface as before
+# Public API
 
 def get_session() -> Optional[str]:
     """Get Telegram StringSession from storage."""
-    session = _get_data_section('telegram_session')
+    session = get_value('session')
     if session:
         return session
     return os.environ.get('TELEGRAM_STRING_SESSION')
@@ -141,17 +127,17 @@ def get_session() -> Optional[str]:
 
 def save_session(session: str) -> bool:
     """Save Telegram StringSession to storage."""
-    return _set_data_section('telegram_session', session)
+    return set_value('session', session)
 
 
 def get_tokens() -> Optional[dict]:
     """Get Spotify tokens from storage."""
-    return _get_data_section('spotify_tokens')
+    return get_value('tokens')
 
 
 def save_tokens(access_token: str, refresh_token: str, expires_at: float) -> bool:
     """Save Spotify tokens to storage."""
-    return _set_data_section('spotify_tokens', {
+    return set_value('tokens', {
         'access_token': access_token,
         'refresh_token': refresh_token,
         'expires_at': expires_at,
@@ -160,8 +146,8 @@ def save_tokens(access_token: str, refresh_token: str, expires_at: float) -> boo
 
 def get_state() -> dict:
     """Get sync state from storage."""
-    state = _get_data_section('sync_state')
-    return state or {
+    state = get_value('state')
+    return state if isinstance(state, dict) else {
         'original_last_name': '',
         'current_last_name': '',
         'last_track_key': None,
@@ -175,24 +161,25 @@ def get_state() -> dict:
 def save_state(state: dict) -> bool:
     """Save sync state to storage."""
     state['last_sync'] = time.time()
-    return _set_data_section('sync_state', state)
+    return set_value('state', state)
 
 
 def get_current_track() -> Optional[dict]:
     """Get current track info from storage."""
-    return _get_data_section('current_track')
+    return get_value('track')
 
 
 def save_current_track(track: Optional[dict]) -> bool:
     """Save current track info to storage."""
     if track:
         track['timestamp'] = time.time()
-    return _set_data_section('current_track', track or {'is_playing': False, 'timestamp': time.time()})
+    return set_value('track', track or {'is_playing': False, 'timestamp': time.time()})
 
 
 def get_errors() -> list:
     """Get error log from storage."""
-    return _get_data_section('errors', [])
+    errors = get_value('errors')
+    return errors if isinstance(errors, list) else []
 
 
 def log_error(error: str, context: str) -> bool:
@@ -204,41 +191,64 @@ def log_error(error: str, context: str) -> bool:
         'context': context,
     })
     errors = errors[:10]
-    return _set_data_section('errors', errors)
+    return set_value('errors', errors)
 
 
 def get_flood_wait_until() -> float:
     """Get Telegram flood wait expiry time."""
-    return _get_data_section('flood_wait_until', 0)
+    value = get_value('flood_wait')
+    return float(value) if value else 0
 
 
 def set_flood_wait_until(until: float) -> bool:
     """Set Telegram flood wait expiry time."""
-    return _set_data_section('flood_wait_until', until)
+    return set_value('flood_wait', until)
 
 
-# Batch update function to minimize writes
+# Batch operations for efficiency
 def batch_update(**kwargs) -> bool:
-    """Update multiple sections at once (single write operation)."""
-    data = _load_all_data()
-    for key, value in kwargs.items():
-        data[key] = value
-    return _save_all_data(data)
+    """Update multiple keys at once using pipeline."""
+    redis = _get_redis()
+    if not redis:
+        return False
+
+    try:
+        pipe = redis.pipeline()
+        for key, value in kwargs.items():
+            full_key = _key(key)
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value)
+            pipe.set(full_key, value)
+        pipe.exec()
+
+        # Update cache
+        global _cache, _cache_time
+        for key, value in kwargs.items():
+            _cache[_key(key)] = value
+        _cache_time = time.time()
+
+        return True
+    except Exception as e:
+        print(f"Redis batch error: {e}")
+        return False
 
 
-# For compatibility
+# Legacy compatibility
 def put_json(key: str, data: Any) -> bool:
-    return _set_data_section(key, data)
+    return set_value(key, data)
 
 
 def get_json(key: str) -> Optional[Any]:
-    return _get_data_section(key)
+    return get_value(key)
 
 
-def delete_blob(key: str) -> bool:
-    """Delete a key from data."""
-    data = _load_all_data()
-    if key in data:
-        del data[key]
-        return _save_all_data(data)
-    return True
+def _load_all_data() -> dict:
+    """Load all data for sync optimization."""
+    return {
+        'telegram_session': get_session(),
+        'spotify_tokens': get_tokens(),
+        'sync_state': get_state(),
+        'current_track': get_current_track(),
+        'flood_wait_until': get_flood_wait_until(),
+        'errors': get_errors(),
+    }
