@@ -1,4 +1,25 @@
 {
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
+    }
+  ],
   "crons": [
     {
       "path": "/api/sync",
@@ -7,19 +28,16 @@
   ],
   "functions": {
     "api/sync.py": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "runtime": "python3.11"
     },
     "api/status.py": {
-      "maxDuration": 10
+      "maxDuration": 10,
+      "runtime": "python3.11"
     },
     "api/init.py": {
-      "maxDuration": 30
+      "maxDuration": 30,
+      "runtime": "python3.11"
     }
-  },
-  "rewrites": [
-    {
-      "source": "/",
-      "destination": "/public/index.html"
-    }
-  ]
+  }
 }
