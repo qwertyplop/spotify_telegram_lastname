@@ -1,0 +1,25 @@
+{
+  "crons": [
+    {
+      "path": "/api/sync",
+      "schedule": "* * * * *"
+    }
+  ],
+  "functions": {
+    "api/sync.py": {
+      "maxDuration": 60
+    },
+    "api/status.py": {
+      "maxDuration": 10
+    },
+    "api/init.py": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/public/index.html"
+    }
+  ]
+}
