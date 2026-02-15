@@ -29,6 +29,10 @@ A serverless Flask app that syncs the user's currently playing Spotify track to 
 3. **"Last Update" timestamp updates when track changes** — Dashboard shows timestamp when track/name is actually updated, remains unchanged when no update needed
 4. **Sync state correctly persists both timestamps to Redis** — last_sync updates on every run, last_update updates only on actual changes
 
+**Plans:**
+- [x] 01-01-PLAN.md — Dashboard UI (remove Now Playing, GMT+3 timestamps, syncing indicator)
+- [x] 01-02-PLAN.md — Backend sync bugs (fix last_sync and last_update persistence)
+
 ---
 
 ### Phase 2: Comprehensive Logging
@@ -55,7 +59,7 @@ A serverless Flask app that syncs the user's currently playing Spotify track to 
 
 | Phase | Goal | Status |
 |-------|------|--------|
-| 1 - Dashboard & Bug Fixes | Fix timestamp issues, remove unused UI | Pending |
+| 1 - Dashboard & Bug Fixes | Fix timestamp issues, remove unused UI | Complete |
 | 2 - Comprehensive Logging | Add structured logging infrastructure | Pending |
 
 ---
@@ -64,16 +68,16 @@ A serverless Flask app that syncs the user's currently playing Spotify track to 
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| UI-01 | Phase 1 | Pending |
-| UI-02 | Phase 1 | Pending |
-| UI-03 | Phase 1 | Pending |
+| UI-01 | Phase 1 | Planned |
+| UI-02 | Phase 1 | Planned |
+| UI-03 | Phase 1 | Planned |
 | LOG-01 | Phase 2 | Pending |
 | LOG-02 | Phase 2 | Pending |
 | LOG-03 | Phase 2 | Pending |
 | LOG-04 | Phase 2 | Pending |
 | LOG-05 | Phase 2 | Pending |
 | LOG-06 | Phase 2 | Pending |
-| BUG-01 | Phase 1 | Pending |
-| BUG-02 | Phase 1 | Pending |
+| BUG-01 | Phase 1 | Planned |
+| BUG-02 | Phase 1 | Planned |
 
 **Coverage:** 11/11 requirements mapped ✓

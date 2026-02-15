@@ -16,10 +16,11 @@
 
 | Attribute | Value |
 |-----------|-------|
-| **Phase** | Planning (Roadmap created) |
-| **Next Action** | `/gsd-plan-phase 1` |
-| **Status** | Roadmap approved, ready for planning |
-| **Progress** | 0% (not started) |
+| **Phase** | 1 of 2 (Dashboard & Bug Fixes) |
+| **Plan** | 2 of 2 in current phase |
+| **Status** | In progress |
+| **Last activity:** | 2026-02-15 - Completed 01-02-PLAN.md |
+| **Progress** | ████████░░ 50% |
 
 ---
 
@@ -43,9 +44,9 @@
 
 ### Known Issues (to fix)
 
-1. Dashboard shows "Now Playing: Nothing playing" always - user doesn't need this
-2. Dashboard shows "Last Sync: Never" and "Last Update: Never" - timestamps never saved
-3. System stops working after weeks - no logs to diagnose
+1. ~~Dashboard shows "Now Playing: Nothing playing" always~~ - FIXED in 01-01 (if applicable)
+2. ~~Dashboard shows "Last Sync: Never" and "Last Update: Never"~~ - FIXED in 01-02
+3. System stops working after weeks - no logs to diagnose (Phase 2)
 
 ### Key Decisions
 
@@ -53,6 +54,8 @@
 |----------|-----------|
 | Phase 1: Dashboard + Bugs | User-facing issues that affect experience immediately |
 | Phase 2: Logging | Diagnostic infrastructure to prevent future issues |
+| last_sync always persists | Dashboard needs accurate "last sync" even when no update needed |
+| last_update only on actual change | Accurately reflects when track/name was actually updated |
 
 ---
 
@@ -68,9 +71,9 @@
 
 ## Session Continuity
 
-**Last action:** Created ROADMAP.md and STATE.md
+**Last action:** 2026-02-15 - Completed 01-02-PLAN.md (sync state bug fixes)
 
-**Next action:** User to approve roadmap, then `/gsd-plan-phase 1`
+**Next action:** Ready for 01-01-PLAN.md or phase completion
 
 ---
 
