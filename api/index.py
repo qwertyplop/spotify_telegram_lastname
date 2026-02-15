@@ -8,6 +8,7 @@ import sys
 import time
 import secrets
 import urllib.parse
+from datetime import datetime
 
 from flask import Flask, jsonify, request, redirect, send_from_directory, make_response
 
@@ -15,6 +16,19 @@ from flask import Flask, jsonify, request, redirect, send_from_directory, make_r
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib import storage, spotify, telegram, formatting
+
+
+def format_gmt3(timestamp):
+    """Format timestamp as absolute datetime in GMT+3 timezone."""
+    if not timestamp:
+        return "Never"
+    try:
+        dt = datetime.fromtimestamp(timestamp)
+        # Format as "Feb 15, 2026 3:45 PM GMT+3"
+        return dt.strftime("%b %d, %Y %I:%M %p") + " GMT+3"
+    except (ValueError, OSError):
+        return "Never"
+
 
 app = Flask(__name__, static_folder='../static')
 
@@ -126,6 +140,9 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
         .btn:hover { opacity: 0.9; }
         .btn-spotify { background: #1db954; color: #fff; }
         .btn-init { background: #3b82f6; color: #fff; margin-left: 0.5rem; }
+        .btn-sync { background: #8b5cf6; color: #fff; padding: 0.5rem 1rem; font-size: 0.875rem; }
+        .btn-sync:disabled { background: #6b7280; cursor: not-allowed; }
+        .syncing { color: #8b5cf6; font-style: italic; }
         .setup-card { text-align: center; }
         .setup-card p { margin-bottom: 1rem; color: #a1a1aa; }
     </style>
@@ -189,10 +206,11 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                 '<div class="connection-item"><span class="status-dot green"></span><span>Telegram</span></div>' +
                 '<div class="connection-item"><span class="status-dot green"></span><span>Spotify</span></div>' +
                 '</div></div>' +
-                '<div class="card"><div class="card-header"><span class="card-title">Sync Status</span></div>' +
+                '<div class="card"><div class="card-header"><span class="card-title">Sync Status</span><button class="btn-sync" onclick="triggerSync()" id="syncBtn">Sync Now</button></div>' +
+                '<div id="syncStatus"></div>' +
                 '<div class="stat-grid">' +
-                '<div class="stat-item"><div class="stat-value">' + formatTimeAgo(data.sync.last_sync_ago) + '</div><div class="stat-label">Last Sync</div></div>' +
-                '<div class="stat-item"><div class="stat-value">' + formatTimeAgo(data.sync.last_update_ago) + '</div><div class="stat-label">Last Update</div></div>' +
+                '<div class="stat-item"><div class="stat-value">' + (data.sync.last_sync_formatted || 'Never') + '</div><div class="stat-label">Last Sync</div></div>' +
+                '<div class="stat-item"><div class="stat-value">' + (data.sync.last_update_formatted || 'Never') + '</div><div class="stat-label">Last Update</div></div>' +
                 '<div class="stat-item"><div class="stat-value">' + data.sync.update_count + '</div><div class="stat-label">Total Updates</div></div>' +
                 '<div class="stat-item"><div class="stat-value">' + (data.spotify_token.valid ? Math.floor(data.spotify_token.expires_in / 60) + 'm' : 'Expired') + '</div><div class="stat-label">Token Expires</div></div>' +
                 '</div>' +
@@ -206,6 +224,43 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                 renderStatus(data);
             } catch (error) {
                 document.getElementById('content').innerHTML = '<div class="card error-card"><div class="card-header"><span class="card-title">Error</span></div><div>Failed to fetch status</div></div>';
+            }
+        }
+        let isSyncing = false;
+        async function triggerSync() {
+            if (isSyncing) return;
+            isSyncing = true;
+            const syncBtn = document.getElementById('syncBtn');
+            const syncStatus = document.getElementById('syncStatus');
+            if (syncBtn) {
+                syncBtn.disabled = true;
+                syncBtn.textContent = 'Syncing...';
+            }
+            if (syncStatus) {
+                syncStatus.innerHTML = '<div class="syncing">Syncing...</div>';
+            }
+            try {
+                const response = await fetch('/api/sync');
+                const result = await response.json();
+                if (syncStatus) {
+                    if (result.success) {
+                        syncStatus.innerHTML = '<div style="color: #22c55e; margin-top: 0.5rem;">' + result.message + '</div>';
+                    } else {
+                        syncStatus.innerHTML = '<div style="color: #ef4444; margin-top: 0.5rem;">' + result.message + '</div>';
+                    }
+                }
+                // Refresh status after sync
+                await fetchStatus();
+            } catch (error) {
+                if (syncStatus) {
+                    syncStatus.innerHTML = '<div style="color: #ef4444; margin-top: 0.5rem;">Sync failed</div>';
+                }
+            } finally {
+                isSyncing = false;
+                if (syncBtn) {
+                    syncBtn.disabled = false;
+                    syncBtn.textContent = 'Sync Now';
+                }
             }
         }
         fetchStatus();
@@ -248,8 +303,10 @@ def status():
         'sync': {
             'status': state.get('status', 'unknown'),
             'last_sync': last_sync,
-            'last_sync_ago': int(now - last_sync) if last_sync else None,
+            'last_sync_formatted': format_gmt3(last_sync),
             'last_update': last_update,
+            'last_update_formatted': format_gmt3(last_update),
+            'last_sync_ago': int(now - last_sync) if last_sync else None,
             'last_update_ago': int(now - last_update) if last_update else None,
             'update_count': state.get('update_count', 0),
             'current_name': state.get('current_last_name', ''),
