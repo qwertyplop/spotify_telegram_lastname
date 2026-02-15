@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "gsd-planner": { "model": "opencode/kimi-k2.5" },
+    "gsd-plan-checker": { "model": "opencode/kimi-k2.5" },
+    "gsd-phase-researcher": { "model": "opencode/kimi-k2.5" },
+    "gsd-roadmapper": { "model": "opencode/kimi-k2.5" },
+    "gsd-project-researcher": { "model": "opencode/kimi-k2.5" },
+    "gsd-research-synthesizer": { "model": "opencode/kimi-k2.5" },
+    "gsd-codebase-mapper": { "model": "opencode/kimi-k2.5" },
+    "gsd-executor": { "model": "opencode/minimax-m2.5-free" },
+    "gsd-debugger": { "model": "opencode/minimax-m2.5-free" },
+    "gsd-verifier": { "model": "opencode/kimi-k2.5" },
+    "gsd-integration-checker": { "model": "opencode/kimi-k2.5" }
+  }
+}
