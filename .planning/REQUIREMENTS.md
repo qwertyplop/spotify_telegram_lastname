@@ -7,9 +7,9 @@
 
 ### Dashboard UI
 
-- [ ] **UI-01**: Remove "Now Playing" section from dashboard
-- [ ] **UI-02**: Fix "Last Sync" timestamp - update on every sync invocation (not just when track changes)
-- [ ] **UI-03**: Fix "Last Update" timestamp - update when track/name actually changes
+- [x] **UI-01**: Remove "Now Playing" section from dashboard
+- [x] **UI-02**: Fix "Last Sync" timestamp - update on every sync invocation (not just when track changes)
+- [x] **UI-03**: Fix "Last Update" timestamp - update when track/name actually changes
 
 ### Logging
 
@@ -22,8 +22,8 @@
 
 ### Bug Fixes
 
-- [ ] **BUG-01**: Fix sync state not saving last_sync timestamp when no update needed
-- [ ] **BUG-02**: Fix sync state not saving last_update timestamp correctly
+- [x] **BUG-01**: Fix sync state not saving last_sync timestamp when no update needed
+- [x] **BUG-02**: Fix sync state not saving last_update timestamp correctly
 
 ## v2 Requirements
 
@@ -42,17 +42,17 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| UI-01 | Phase 1 | Pending |
-| UI-02 | Phase 1 | Pending |
-| UI-03 | Phase 1 | Pending |
+| UI-01 | Phase 1 | Complete |
+| UI-02 | Phase 1 | Complete |
+| UI-03 | Phase 1 | Complete |
 | LOG-01 | Phase 2 | Pending |
 | LOG-02 | Phase 2 | Pending |
 | LOG-03 | Phase 2 | Pending |
 | LOG-04 | Phase 2 | Pending |
 | LOG-05 | Phase 2 | Pending |
 | LOG-06 | Phase 2 | Pending |
-| BUG-01 | Phase 1 | Pending |
-| BUG-02 | Phase 1 | Pending |
+| BUG-01 | Phase 1 | Complete |
+| BUG-02 | Phase 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 11 total

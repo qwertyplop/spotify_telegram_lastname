@@ -68,16 +68,16 @@ A serverless Flask app that syncs the user's currently playing Spotify track to 
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| UI-01 | Phase 1 | Planned |
-| UI-02 | Phase 1 | Planned |
-| UI-03 | Phase 1 | Planned |
+| UI-01 | Phase 1 | Complete |
+| UI-02 | Phase 1 | Complete |
+| UI-03 | Phase 1 | Complete |
 | LOG-01 | Phase 2 | Pending |
 | LOG-02 | Phase 2 | Pending |
 | LOG-03 | Phase 2 | Pending |
 | LOG-04 | Phase 2 | Pending |
 | LOG-05 | Phase 2 | Pending |
 | LOG-06 | Phase 2 | Pending |
-| BUG-01 | Phase 1 | Planned |
-| BUG-02 | Phase 1 | Planned |
+| BUG-01 | Phase 1 | Complete |
+| BUG-02 | Phase 1 | Complete |
 
 **Coverage:** 11/11 requirements mapped ✓
