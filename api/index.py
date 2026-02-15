@@ -171,10 +171,6 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                 return;
             }
 
-            let trackHtml = data.track && data.track.is_playing
-                ? '<div class="track-info"><div class="track-title">' + escapeHtml(data.track.title) + '</div><div class="track-artist">' + escapeHtml(data.track.artist) + '</div>' + (data.track.album ? '<div class="track-album">' + escapeHtml(data.track.album) + '</div>' : '') + '</div>'
-                : '<div class="not-playing">Nothing playing</div>';
-
             let rateLimitHtml = data.rate_limit && data.rate_limit.active
                 ? '<div class="rate-limit-banner">Rate limited - ' + data.rate_limit.remaining_seconds + 's remaining</div>'
                 : '';
@@ -193,7 +189,6 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                 '<div class="connection-item"><span class="status-dot green"></span><span>Telegram</span></div>' +
                 '<div class="connection-item"><span class="status-dot green"></span><span>Spotify</span></div>' +
                 '</div></div>' +
-                '<div class="card"><div class="card-header"><span class="card-title">Now Playing</span></div>' + trackHtml + '</div>' +
                 '<div class="card"><div class="card-header"><span class="card-title">Sync Status</span></div>' +
                 '<div class="stat-grid">' +
                 '<div class="stat-item"><div class="stat-value">' + formatTimeAgo(data.sync.last_sync_ago) + '</div><div class="stat-label">Last Sync</div></div>' +
@@ -230,7 +225,6 @@ def home():
 def status():
     """Get current sync status."""
     state = storage.get_state()
-    track = storage.get_current_track()
     tokens = storage.get_tokens()
     errors = storage.get_errors()
     flood_until = storage.get_flood_wait_until()
@@ -251,7 +245,6 @@ def status():
             'telegram': session_exists,
             'spotify': token_valid,
         },
-        'track': track,
         'sync': {
             'status': state.get('status', 'unknown'),
             'last_sync': last_sync,
@@ -476,12 +469,11 @@ def sync():
             result['success'] = True
             result['action'] = 'skipped'
             result['message'] = 'No update needed'
-            # Only save if something else changed (tokens refreshed)
-            if needs_save:
-                state['last_sync'] = time.time()
-                updates['sync_state'] = state
-                updates['current_track'] = track.to_dict() if track else {'is_playing': False}
-                storage.batch_update(**updates)
+            # Always save last_sync timestamp and current_track
+            state['last_sync'] = time.time()
+            updates['sync_state'] = state
+            updates['current_track'] = track.to_dict() if track else {'is_playing': False}
+            storage.batch_update(**updates)
             return jsonify(result)
 
         # Check if name actually changed
@@ -489,11 +481,11 @@ def sync():
             result['success'] = True
             result['action'] = 'skipped'
             result['message'] = 'Name unchanged'
-            if needs_save:
-                state['last_sync'] = time.time()
-                updates['sync_state'] = state
-                updates['current_track'] = track.to_dict() if track else {'is_playing': False}
-                storage.batch_update(**updates)
+            # Always save last_sync timestamp and current_track
+            state['last_sync'] = time.time()
+            updates['sync_state'] = state
+            updates['current_track'] = track.to_dict() if track else {'is_playing': False}
+            storage.batch_update(**updates)
             return jsonify(result)
 
         # Perform Telegram update
