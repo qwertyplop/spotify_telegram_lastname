@@ -39,6 +39,8 @@ env/
 .idea/
 *.swp
 *.swo
+.planning/
+opencode.json
 
 # OS
 .DS_Store

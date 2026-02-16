@@ -23,9 +23,9 @@
         "verification": "opencode/minimax-m2.1-free"
       },
       "custom": {
-        "planning": "opencode/kimi-k2.5",
+        "planning": "opencode/kimi-k2.5-free",
         "execution": "opencode/minimax-m2.5-free",
-        "verification": "opencode/kimi-k2.5"
+        "verification": "opencode/kimi-k2.5-free"
       }
     },
     "custom_overrides": {
