@@ -8,6 +8,11 @@ import os
 import time
 from typing import Optional, Any
 
+from lib.logger import get_logger
+
+# Get module logger
+logger = get_logger('storage')
+
 try:
     from upstash_redis import Redis
     REDIS_AVAILABLE = True
@@ -25,15 +30,20 @@ CACHE_TTL = 30  # seconds
 
 def _get_redis() -> Optional['Redis']:
     """Get Redis client."""
+    logger.debug("Creating Redis client")
+    
     if not REDIS_AVAILABLE:
+        logger.warning("Redis not available (upstash_redis not installed)")
         return None
 
     url = os.environ.get("UPSTASH_REDIS_REST_URL")
     token = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
     if not url or not token:
+        logger.warning("Redis URL/token not configured")
         return None
 
+    logger.debug("Redis client created successfully")
     return Redis(url=url, token=token)
 
 
@@ -47,11 +57,15 @@ def get_value(key: str) -> Optional[Any]:
     global _cache, _cache_time
 
     full_key = _key(key)
+    logger.debug(f"Getting value for key: {key}")
 
     # Check cache first
     if full_key in _cache and (time.time() - _cache_time) < CACHE_TTL:
+        logger.debug(f"Cache hit for key: {key}")
         return _cache[full_key]
 
+    logger.debug(f"Cache miss for key: {key}")
+    
     redis = _get_redis()
     if not redis:
         return None
@@ -64,9 +78,12 @@ def get_value(key: str) -> Optional[Any]:
                 value = json.loads(value)
             _cache[full_key] = value
             _cache_time = time.time()
+            logger.debug(f"Value retrieved from Redis for key: {key}")
+        else:
+            logger.debug(f"No value found in Redis for key: {key}")
         return value
     except Exception as e:
-        print(f"Redis get error: {e}")
+        logger.error(f"Failed to get value for key {key}: {e}")
         return None
 
 
@@ -75,6 +92,7 @@ def set_value(key: str, value: Any, ex: int = None) -> bool:
     global _cache, _cache_time
 
     full_key = _key(key)
+    logger.debug(f"Setting value for key: {key}, TTL: {ex}")
 
     redis = _get_redis()
     if not redis:
@@ -93,14 +111,17 @@ def set_value(key: str, value: Any, ex: int = None) -> bool:
         # Update cache
         _cache[full_key] = value if not isinstance(value, str) else json.loads(value) if value.startswith('{') else value
         _cache_time = time.time()
+        logger.debug(f"Value saved to Redis for key: {key}")
         return True
     except Exception as e:
-        print(f"Redis set error: {e}")
+        logger.error(f"Failed to set value for key {key}: {e}")
         return False
 
 
 def delete_key(key: str) -> bool:
     """Delete a key from Redis."""
+    logger.debug(f"Deleting key: {key}")
+    
     redis = _get_redis()
     if not redis:
         return False
@@ -109,9 +130,10 @@ def delete_key(key: str) -> bool:
         redis.delete(_key(key))
         if _key(key) in _cache:
             del _cache[_key(key)]
+        logger.debug(f"Key deleted: {key}")
         return True
     except Exception as e:
-        print(f"Redis delete error: {e}")
+        logger.error(f"Failed to delete key {key}: {e}")
         return False
 
 
@@ -208,6 +230,11 @@ def set_flood_wait_until(until: float) -> bool:
 # Batch operations for efficiency
 def batch_update(**kwargs) -> bool:
     """Update multiple keys at once using pipeline."""
+    count = len(kwargs)
+    keys = list(kwargs.keys())
+    logger.info(f"Batch updating {count} keys")
+    logger.debug(f"Keys in batch: {keys}")
+    
     redis = _get_redis()
     if not redis:
         return False
@@ -227,9 +254,10 @@ def batch_update(**kwargs) -> bool:
             _cache[_key(key)] = value
         _cache_time = time.time()
 
+        logger.info("Batch update successful")
         return True
     except Exception as e:
-        print(f"Redis batch error: {e}")
+        logger.error(f"Batch update failed: {e}")
         return False
 
 
@@ -252,3 +280,87 @@ def _load_all_data() -> dict:
         'flood_wait_until': get_flood_wait_until(),
         'errors': get_errors(),
     }
+
+
+# ==================== Log Persistence ====================
+
+# Log constants
+LOG_KEY = 'logs'
+MAX_LOG_ENTRIES = 500
+
+
+def append_log(log_entry: dict) -> bool:
+    """
+    Append a log entry to Redis (keeps last 500).
+    
+    Args:
+        log_entry: Dictionary with log data (timestamp, level, name, message, correlation_id, etc.)
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    logger.debug(f"Appending log entry: {log_entry.get('message', '')[:50]}")
+    
+    redis = _get_redis()
+    if not redis:
+        logger.debug("Redis not available, skipping log persistence")
+        return False
+
+    try:
+        full_key = _key(LOG_KEY)
+        # Serialize log entry to JSON
+        log_json = json.dumps(log_entry)
+        
+        # LPUSH to add to beginning of list
+        redis.lpush(full_key, log_json)
+        
+        # LTRIM to keep only last MAX_LOG_ENTRIES
+        redis.ltrim(full_key, 0, MAX_LOG_ENTRIES - 1)
+        
+        logger.debug(f"Log entry persisted to Redis (key: {full_key})")
+        return True
+    except Exception as e:
+        # Log error but don't fail - logging should never crash the app
+        logger.error(f"Failed to append log to Redis: {e}")
+        return False
+
+
+def get_logs(count: int = 100) -> list:
+    """
+    Get recent log entries from Redis.
+    
+    Args:
+        count: Number of log entries to retrieve (default 100)
+    
+    Returns:
+        List of log entry dictionaries
+    """
+    logger.debug(f"Retrieving last {count} log entries from Redis")
+    
+    redis = _get_redis()
+    if not redis:
+        logger.debug("Redis not available, returning empty log list")
+        return []
+
+    try:
+        full_key = _key(LOG_KEY)
+        # LRANGE to get entries (0 to count-1)
+        entries = redis.lrange(full_key, 0, count - 1)
+        
+        # Parse JSON strings back to dicts
+        logs = []
+        for entry in entries:
+            if isinstance(entry, str):
+                try:
+                    logs.append(json.loads(entry))
+                except json.JSONDecodeError:
+                    # Handle non-JSON entries gracefully
+                    logs.append({'message': entry, 'raw': True})
+            else:
+                logs.append(entry)
+        
+        logger.debug(f"Retrieved {len(logs)} log entries from Redis")
+        return logs
+    except Exception as e:
+        logger.error(f"Failed to get logs from Redis: {e}")
+        return []
