@@ -10,6 +10,11 @@ from telethon import TelegramClient, functions
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, SessionExpiredError, AuthKeyError
 
+from lib.logger import get_logger
+
+# Module-level logger
+logger = get_logger('telegram')
+
 
 def get_credentials() -> tuple:
     """Get Telegram credentials from environment."""
@@ -35,6 +40,7 @@ async def get_client(session_string: str) -> TelegramClient:
     Raises:
         RuntimeError: If session is invalid
     """
+    logger.info("Connecting to Telegram")
     api_id, api_hash = get_credentials()
 
     client = TelegramClient(
@@ -47,8 +53,10 @@ async def get_client(session_string: str) -> TelegramClient:
 
     if not await client.is_user_authorized():
         await client.disconnect()
+        logger.error("Telegram session expired or invalid")
         raise RuntimeError("Telegram session expired or invalid")
 
+    logger.info("Telegram connection successful")
     return client
 
 
@@ -62,10 +70,13 @@ async def get_last_name(session_string: str) -> str:
     Returns:
         Current last name
     """
+    logger.info("Fetching current last name")
     client = await get_client(session_string)
     try:
         me = await client.get_me()
-        return me.last_name or ""
+        name = me.last_name or ""
+        logger.debug(f"Current last name: {name}")
+        return name
     finally:
         await client.disconnect()
 
@@ -82,9 +93,11 @@ async def set_last_name(session_string: str, last_name: str) -> None:
         FloodWaitError: If rate limited (with .seconds attribute)
         RuntimeError: If session is invalid
     """
+    logger.info(f"Updating Telegram last name to: {last_name}")
     client = await get_client(session_string)
     try:
         await client(functions.account.UpdateProfileRequest(last_name=last_name))
+        logger.info("Last name updated successfully")
     finally:
         await client.disconnect()
 
@@ -106,18 +119,20 @@ async def update_last_name_safe(
         - (False, seconds) if rate limited
         - (False, None) on other errors
     """
+    logger.info(f"Attempting safe last name update to: {last_name}")
     try:
         await set_last_name(session_string, last_name)
+        logger.info("Last name updated successfully")
         return True, None
     except FloodWaitError as e:
         wait_seconds = getattr(e, 'seconds', 300)
-        print(f"Telegram rate limit: {wait_seconds}s")
+        logger.warning(f"Telegram rate limit hit: {wait_seconds}s")
         return False, wait_seconds
     except (SessionExpiredError, AuthKeyError) as e:
-        print(f"Telegram session error: {e}")
+        logger.error(f"Telegram session error: {e}")
         raise RuntimeError("Telegram session expired")
     except Exception as e:
-        print(f"Telegram update error: {e}")
+        logger.error(f"Failed to update last name: {e}")
         return False, None
 
 
