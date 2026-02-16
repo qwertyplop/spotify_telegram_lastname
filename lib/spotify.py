@@ -9,6 +9,11 @@ from typing import Optional
 
 import requests
 
+from lib.logger import get_logger
+
+# Module-level logger
+logger = get_logger('spotify')
+
 
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 SPOTIFY_PLAYER_URL = "https://api.spotify.com/v1/me/player/currently-playing"
@@ -73,6 +78,7 @@ def refresh_access_token(refresh_token: str) -> SpotifyToken:
     Raises:
         RuntimeError: If token refresh fails
     """
+    logger.info("Refreshing Spotify access token")
     client_id, client_secret = get_credentials()
 
     payload = {
@@ -90,6 +96,7 @@ def refresh_access_token(refresh_token: str) -> SpotifyToken:
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
+        logger.error(f"Failed to refresh Spotify token: {e}")
         raise RuntimeError(f"Failed to refresh Spotify token: {e}")
 
     access_token = data["access_token"]
@@ -98,6 +105,8 @@ def refresh_access_token(refresh_token: str) -> SpotifyToken:
     # Default to 3600s if not specified
     expires_in = int(data.get("expires_in", 3600))
     expires_at = time.time() + expires_in
+
+    logger.info(f"Token refreshed successfully, expires in {expires_in}s")
 
     return SpotifyToken(
         access_token=access_token,
@@ -119,6 +128,7 @@ def get_current_track(access_token: str) -> Optional[TrackInfo]:
     Raises:
         RuntimeError: If token is expired (401 response)
     """
+    logger.info("Fetching current track from Spotify")
     headers = {"Authorization": f"Bearer {access_token}"}
 
     try:
@@ -128,23 +138,27 @@ def get_current_track(access_token: str) -> Optional[TrackInfo]:
             timeout=SPOTIFY_TIMEOUT,
         )
     except requests.exceptions.Timeout:
-        print("Spotify API timeout")
+        logger.warning("Spotify API timeout")
         return None
     except Exception as e:
-        print(f"Spotify API error: {e}")
+        logger.error(f"Failed to fetch track: {e}")
         return None
+
+    logger.debug(f"Spotify API response status: {resp.status_code}")
 
     # 204: No content (nothing playing)
     if resp.status_code == 204:
+        logger.info("No track playing")
         return None
 
     # 401: Token expired
     if resp.status_code == 401:
+        logger.warning("Spotify token expired")
         raise RuntimeError("Spotify token expired")
 
     # Other errors
     if resp.status_code != 200:
-        print(f"Spotify API error: {resp.status_code}")
+        logger.error(f"Spotify API error: {resp.status_code}")
         return None
 
     data = resp.json()
@@ -153,6 +167,7 @@ def get_current_track(access_token: str) -> Optional[TrackInfo]:
 
     is_playing = data.get("is_playing", False)
     if not is_playing:
+        logger.info("No track playing")
         return None
 
     item = data.get("item") or {}
@@ -163,6 +178,8 @@ def get_current_track(access_token: str) -> Optional[TrackInfo]:
 
     if not title or not artists:
         return None
+
+    logger.info(f"Track playing: {title} by {artists}")
 
     return TrackInfo(
         title=title,
