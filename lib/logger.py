@@ -136,6 +136,7 @@ class RedisLogHandler(logging.Handler):
     """
     Log handler that buffers logs in memory and flushes to Redis.
     Keeps last 500 entries in Redis list.
+    Uses storage.append_log() for persistence.
     """
     
     def __init__(self, max_buffer: int = 100, max_redis_logs: int = 500):
@@ -144,33 +145,18 @@ class RedisLogHandler(logging.Handler):
         self._max_buffer = max_buffer
         self._max_redis_logs = max_redis_logs
         self._lock = threading.Lock()
-        
-        # Redis client (lazy loaded)
-        self._redis = None
-    
-    def _get_redis(self):
-        """Lazy load Redis client."""
-        if self._redis is not None:
-            return self._redis
-        
-        try:
-            from upstash_redis import Redis
-            url = os.environ.get("UPSTASH_REDIS_REST_URL")
-            token = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-            if url and token:
-                self._redis = Redis(url=url, token=token)
-                return self._redis
-        except ImportError:
-            pass
-        except Exception:
-            pass
-        return None
     
     def emit(self, record: logging.LogRecord):
         """Emit a log record."""
         try:
-            # Format the record
-            log_entry = self.format(record)
+            # Format the record as JSON string
+            log_entry_json = self.format(record)
+            
+            # Parse back to dict for storage.append_log()
+            try:
+                log_entry = json.loads(log_entry_json)
+            except json.JSONDecodeError:
+                log_entry = {'message': log_entry_json, 'raw': True}
             
             with self._lock:
                 self._buffer.append(log_entry)
@@ -182,25 +168,21 @@ class RedisLogHandler(logging.Handler):
             self.handleError(record)
     
     def _flush(self):
-        """Flush buffer to Redis."""
+        """Flush buffer to Redis using storage.append_log()."""
         if not self._buffer:
             return
         
-        redis = self._get_redis()
-        if not redis:
-            # Redis not available, clear buffer
-            self._buffer.clear()
-            return
-        
         try:
-            key = "spotify-telegram:logs"
+            # Import storage module
+            from lib import storage
             
-            # LPUSH all buffered entries
-            for entry in self._buffer:
-                redis.lpush(key, entry)
-            
-            # LTRIM to keep only last N entries
-            redis.ltrim(key, 0, self._max_redis_logs - 1)
+            # Append each log entry using storage.append_log()
+            for log_entry in self._buffer:
+                try:
+                    storage.append_log(log_entry)
+                except Exception:
+                    # Silently fail for individual log entries
+                    pass
             
             self._buffer.clear()
         except Exception:
