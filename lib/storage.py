@@ -141,34 +141,60 @@ def delete_key(key: str) -> bool:
 
 def get_session() -> Optional[str]:
     """Get Telegram StringSession from storage."""
+    logger.debug("Getting session")
     session = get_value('session')
     if session:
+        logger.debug("Session found in storage")
         return session
+    logger.debug("Session not found, falling back to environment")
     return os.environ.get('TELEGRAM_STRING_SESSION')
 
 
 def save_session(session: str) -> bool:
     """Save Telegram StringSession to storage."""
-    return set_value('session', session)
+    logger.debug("Saving session")
+    result = set_value('session', session)
+    if result:
+        logger.debug("Session saved successfully")
+    else:
+        logger.error("Failed to save session")
+    return result
 
 
 def get_tokens() -> Optional[dict]:
     """Get Spotify tokens from storage."""
-    return get_value('tokens')
+    logger.debug("Getting tokens")
+    tokens = get_value('tokens')
+    if tokens:
+        logger.debug("Tokens found in storage")
+    else:
+        logger.debug("No tokens found in storage")
+    return tokens
 
 
 def save_tokens(access_token: str, refresh_token: str, expires_at: float) -> bool:
     """Save Spotify tokens to storage."""
-    return set_value('tokens', {
+    logger.debug("Saving tokens")
+    result = set_value('tokens', {
         'access_token': access_token,
         'refresh_token': refresh_token,
         'expires_at': expires_at,
     })
+    if result:
+        logger.debug("Tokens saved successfully")
+    else:
+        logger.error("Failed to save tokens")
+    return result
 
 
 def get_state() -> dict:
     """Get sync state from storage."""
+    logger.debug("Getting sync state")
     state = get_value('state')
+    if state:
+        logger.debug("State found in storage")
+    else:
+        logger.debug("No state found, returning default")
     return state if isinstance(state, dict) else {
         'original_last_name': '',
         'current_last_name': '',
@@ -182,30 +208,50 @@ def get_state() -> dict:
 
 def save_state(state: dict) -> bool:
     """Save sync state to storage."""
+    logger.debug("Saving sync state")
     state['last_sync'] = time.time()
-    return set_value('state', state)
+    result = set_value('state', state)
+    if result:
+        logger.debug("State saved successfully")
+    else:
+        logger.error("Failed to save state")
+    return result
 
 
 def get_current_track() -> Optional[dict]:
     """Get current track info from storage."""
-    return get_value('track')
+    logger.debug("Getting current track")
+    track = get_value('track')
+    if track:
+        logger.debug("Current track found")
+    else:
+        logger.debug("No current track found")
+    return track
 
 
 def save_current_track(track: Optional[dict]) -> bool:
     """Save current track info to storage."""
+    logger.debug("Saving current track")
     if track:
         track['timestamp'] = time.time()
-    return set_value('track', track or {'is_playing': False, 'timestamp': time.time()})
+    result = set_value('track', track or {'is_playing': False, 'timestamp': time.time()})
+    if result:
+        logger.debug("Current track saved successfully")
+    else:
+        logger.error("Failed to save current track")
+    return result
 
 
 def get_errors() -> list:
     """Get error log from storage."""
+    logger.debug("Getting error log")
     errors = get_value('errors')
     return errors if isinstance(errors, list) else []
 
 
 def log_error(error: str, context: str) -> bool:
     """Add error to error log (keeps last 10)."""
+    logger.debug(f"Logging error: {context}")
     errors = get_errors()
     errors.insert(0, {
         'timestamp': time.time(),
@@ -213,18 +259,30 @@ def log_error(error: str, context: str) -> bool:
         'context': context,
     })
     errors = errors[:10]
-    return set_value('errors', errors)
+    result = set_value('errors', errors)
+    if result:
+        logger.debug(f"Error logged: {error}")
+    else:
+        logger.error("Failed to log error")
+    return result
 
 
 def get_flood_wait_until() -> float:
     """Get Telegram flood wait expiry time."""
+    logger.debug("Getting flood wait until")
     value = get_value('flood_wait')
     return float(value) if value else 0
 
 
 def set_flood_wait_until(until: float) -> bool:
     """Set Telegram flood wait expiry time."""
-    return set_value('flood_wait', until)
+    logger.debug(f"Setting flood wait until: {until}")
+    result = set_value('flood_wait', until)
+    if result:
+        logger.debug("Flood wait set successfully")
+    else:
+        logger.error("Failed to set flood wait")
+    return result
 
 
 # Batch operations for efficiency
