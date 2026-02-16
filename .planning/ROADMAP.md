@@ -53,6 +53,12 @@ A serverless Flask app that syncs the user's currently playing Spotify track to 
 5. **telegram.py includes logging** — Name updates, rate limits, and errors are logged with relevant context
 6. **storage.py includes logging** — Redis operations and errors are logged with relevant context
 
+**Plans:**
+- [ ] 02-01-PLAN.md — Logging infrastructure (python-json-logger, correlation IDs, Redis handler)
+- [ ] 02-02-PLAN.md — Module logging (spotify.py, telegram.py)
+- [ ] 02-03-PLAN.md — Storage logging (storage.py operations)
+- [ ] 02-04-PLAN.md — Sync function logging (correlation IDs, log persistence)
+
 ---
 
 ## Progress
